@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Venta / Devolución manual</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body {
+            background-color: #f4f6f9;
+        }
+
+        pre {
+            background: #0d1117;
+            color: #00ff9c;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 400px;
+            overflow: auto;
+            font-size: 0.9rem;
+        }
+
+        .error {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="text-center my-4">
+        <h1 class="mt-3">Test CORS Web</h1>
+    </div>
+
+    <div class="container py-4">
+        <div class="row justify-content-center">
+            <div class="col-lg-9 col-xl-8">
+
+                <div class="card shadow-sm">
+                    <div class="card-body">
+
+                        <h4 class="mb-4 text-center">
+                            Venta / Devolución de prueba
+                        </h4>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">IP / Host base</label>
+                                <input id="ipBase" class="form-control" value="https://192.168.1.219:3000">
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">API Key</label>
+                                <input id="apiKey" class="form-control" placeholder="Es necesario para producción">
+                            </div>
+
+                            <div class="col-md-4">
+                                <label class="form-label">Importe (céntimos)</label>
+                                <input id="importe" type="number" class="form-control" value="1000">
+                            </div>
+
+                            <div class="col-md-4">
+                                <label class="form-label">Referencia</label>
+                                <input id="referencia" type="number" class="form-control" placeholder="Ej: 568947">
+                            </div>
+
+                            <div class="col-md-4 d-flex align-items-end gap-2">
+                                <button id="btnEnviar" class="btn btn-success w-100">
+                                    💳 Enviar Pago
+                                </button>
+
+                                <button id="btnEnviarDevolucion" class="btn btn-warning w-100" disabled>
+                                    ↩️ Devolver
+                                </button>
+
+                            </div>
+                            <button id="btnGetInformacion" class="btn btn-secondary w-100">
+                                🖥️ Comercio y terminal, versiones, hardware
+                            </button>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <h6>Resultado / Errores</h6>
+                        <pre id="salida">Esperando acción...</pre>
+
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const salida = document.getElementById("salida")
+        const btnEnviar = document.getElementById("btnEnviar")
+        const btnEnviarDevolucion = document.getElementById("btnEnviarDevolucion")
+        const btnGetInformacion = document.getElementById("btnGetInformacion")
+        let referencia = document.getElementById("referencia")
+
+        referencia.addEventListener("input", activarBotonDevolver)
+
+        /* ===============================
+           CAPTURA DE ERRORES GLOBALES
+        ================================= */
+        window.onerror = function (msg, url, line, col, error) {
+            mostrarError("JS Error", {
+                mensaje: msg,
+                archivo: url,
+                linea: line,
+                columna: col,
+                detalle: error?.stack
+            })
+        }
+
+        window.addEventListener("unhandledrejection", event => {
+            mostrarError("Promise rechazada", event.reason);
+        });
+
+        /* ===============================
+           UTILIDADES
+        ================================= */
+        function log(texto) {
+            salida.textContent += "\n" + texto
+        }
+
+        function activarBotonDevolver() {
+            const valor = referencia.value.trim()
+            btnEnviarDevolucion.disabled = valor === ""
+        }
+
+
+        function mostrarJSON(obj) {
+            salida.textContent = JSON.stringify(obj, null, 2)
+        }
+
+        function mostrarError(titulo, error) {
+            salida.innerHTML =
+                `<span class="error">${titulo}</span>\n` +
+                JSON.stringify(error, null, 2)
+        }
+
+        /* ===============================
+           FETCH SEGURO (captura CORS)
+        ================================= */
+        async function fetchSeguro(url, opciones) {
+            try {
+                const res = await fetch(url, opciones)
+                const text = await res.text()
+
+                if (!res.ok) {
+                    throw {
+                        status: res.status,
+                        statusText: res.statusText,
+                        body: text
+                    }
+                }
+
+                try {
+                    return JSON.parse(text)
+                } catch {
+                    return text
+                }
+
+            } catch (err) {
+                throw {
+                    tipo: "FETCH / CORS",
+                    url,
+                    detalle: err
+                }
+            }
+        }
+
+        /* ===============================
+           FLUJO DE PAGO
+        ================================= */
+        async function enviarPago() {
+            salida.textContent = "Iniciando venta...\n"
+
+            const ipBase = document.getElementById("ipBase").value.trim()
+            const apiKey = document.getElementById("apiKey").value.trim()
+            const importe = parseInt(document.getElementById("importe").value, 10)
+
+            const CREATE_URL = `${ipBase}/v1/createTransaction`
+            const PAYMENT_URL = `${ipBase}/v1/payment`
+
+            try {
+                log("1️⃣ CreateTransaction...")
+
+                const createData = await fetchSeguro(CREATE_URL, {
+                    method: "GET",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-apikey": apiKey
+                    }
+                })
+
+                log("Respuesta CreateTransaction OK")
+
+                const transactionId = createData.transactionId
+                if (!transactionId) {
+                    throw "transactionId no presente en la respuesta"
+                }
+
+                log(`transactionId = ${transactionId}`)
+                log("2️⃣ Payment...")
+
+                const paymentBody = {
+                    transactionId,
+                    paymentApp: "comercia",
+                    amount: importe,
+                    currencyCode: "EUR",
+                    otherData: {
+                        printReceipt: 0
+                    }
+                }
+
+                const paymentData = await fetchSeguro(PAYMENT_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-apikey": apiKey
+                    },
+                    body: JSON.stringify(paymentBody)
+                })
+
+                mostrarJSON({
+                    estado: "PAGO COMPLETADO",
+                    respuesta: paymentData
+                })
+
+            } catch (error) {
+                mostrarError("ERROR EN EL PROCESO", error)
+            }
+        }
+
+        /* ===============================
+          FLUJO DE DEVOLUCIÓN
+       ================================= */
+        async function devolverOperacion() {
+            salida.textContent = "Iniciando devolución...\n"
+
+            const ipBase = document.getElementById("ipBase").value.trim()
+            const apiKey = document.getElementById("apiKey").value.trim()
+            const importe = parseInt(document.getElementById("importe").value, 10)
+            const transactionNumber = referencia.value.trim()
+
+            if (!transactionNumber) {
+                mostrarError("ERROR", "Debe introducir una referencia")
+                return
+            }
+
+            const CREATE_URL = `${ipBase}/v1/createTransaction`
+            const PAYMENT_URL = `${ipBase}/v1/refund`
+
+            try {
+                log("1️⃣ CreateTransaction (devolución)...")
+
+                const createData = await fetchSeguro(CREATE_URL, {
+                    method: "GET",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-apikey": apiKey
+                    }
+                })
+
+                const transactionId = createData.transactionId
+                if (!transactionId) {
+                    throw "transactionId no presente en createTransaction"
+                }
+
+                log(`transactionId = ${transactionId}`)
+                log("2️⃣ Refund devolución...")
+
+                const devolucionBody = {
+                    transactionId: transactionId,
+                    paymentApp: "comercia",
+                    amount: importe,
+                    currencyCode: "EUR",
+                    transactionNumber: transactionNumber,
+                    otherData: {
+                        printReceipt: 0
+                    }
+                }
+
+                const devolucionData = await fetchSeguro(PAYMENT_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-apikey": apiKey
+                    },
+                    body: JSON.stringify(devolucionBody)
+                })
+
+                mostrarJSON({
+                    estado: "DEVOLUCIÓN COMPLETADA",
+                    respuesta: devolucionData
+                })
+
+            } catch (error) {
+                mostrarError("ERROR EN DEVOLUCIÓN", error)
+            }
+        }
+
+        /* ===============================
+          FLUJO DE GET COMERCIO Y TID CON ROTACIÓN
+       ================================= */
+
+        const endpoints = [
+            { url: "/v1/getPaymentAppConfig", metodo: "POST", body: { paymentApp: "comercia" } },
+            { url: "/v1/getDeviceConfig", metodo: "POST", body: { paymentApp: "comercia" } },
+            { url: "/v1/getVersion", metodo: "GET", body: null }
+        ];
+
+        let indiceEndpoint = 0;
+
+        async function getComercioTid() {
+            salida.textContent = "Consultando datos del datáfono...\n";
+
+            const ipBase = document.getElementById("ipBase").value.trim();
+            const apiKey = document.getElementById("apiKey").value.trim();
+
+            const endpointActual = endpoints[indiceEndpoint];
+            const fullURL = `${ipBase}${endpointActual.url}`;
+
+            try {
+                log(`🔹 Consultando ${endpointActual.url}...`);
+
+                let opciones = {
+                    method: endpointActual.metodo,
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-apikey": apiKey
+                    }
+                };
+
+                if (endpointActual.body) {
+                    opciones.body = JSON.stringify(endpointActual.body);
+                }
+
+                const configData = await fetchSeguro(fullURL, opciones);
+
+                mostrarJSON({
+                    estado: `DATOS OBTENIDOS - ${endpointActual.url}`,
+                    respuesta: configData
+                });
+
+                // Pasamos al siguiente endpoint para la próxima pulsación
+                indiceEndpoint = (indiceEndpoint + 1) % endpoints.length;
+
+            } catch (error) {
+                mostrarError("ERROR AL OBTENER DATOS", error);
+            }
+        }
+
+        btnEnviarDevolucion.addEventListener("click", devolverOperacion)
+        btnEnviar.addEventListener("click", enviarPago)
+        btnGetInformacion.addEventListener("click", getComercioTid)
+    </script>
+
+    <div class="row text-center rounded-pill py-3 mt-2">
+        <div class="container">
+            <small>© 2026 Generador XIE - Kaled Emanuel Jaluf</small>
+        </div>
+    </div>
+
+</body>
+
+</html>
